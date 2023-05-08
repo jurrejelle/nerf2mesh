@@ -146,14 +146,15 @@ vec3 evaluateNetwork(vec4 f0, vec3 viewdir) {
 }
 
 void main() {    
-    vec4 diffuse = texture( tDiffuse, vUv );
     if (mode == 1) { // diffuse
+        vec4 diffuse = texture( tDiffuse, vUv );
         pc_FragColor.rgb = diffuse.rgb;
     } else {
         vec4 specular = texture( tSpecular, vUv );
         if (mode == 2) { // specular
             pc_FragColor.rgb = evaluateNetwork(specular, normalize(rayDirection));
         } else { // full
+            vec4 diffuse = texture( tDiffuse, vUv );
             pc_FragColor.rgb = clamp(diffuse.rgb + evaluateNetwork(specular, normalize(rayDirection)), 0.0f, 1.0f);
         }
     }
@@ -435,11 +436,11 @@ function init() {
             for (let cas = 0; cas < cascade; cas++) {
 
                 // load feature texture
-                let tex0 = new THREE.TextureLoader().load(BASE+name+'/feat0_'+cas.toString()+'.jpg', object => {
+                let tex0 = new THREE.TextureLoader().load(BASE+name+'/feat0_'+cas.toString()+'.png', object => {
                     console.log('[INFO] loaded diffuse tex:', name, cas);
                     updateProgressBar(name, cas * 3 + 1);
                 });
-                let tex1 = new THREE.TextureLoader().load(BASE+name+'/feat1_'+cas.toString()+'.jpg', object => {
+                let tex1 = new THREE.TextureLoader().load(BASE+name+'/feat1_'+cas.toString()+'.png', object => {
                     console.log('[INFO] loaded specular tex:', name, cas);
                     updateProgressBar(name, cas * 3 + 2);
                 });
