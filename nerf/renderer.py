@@ -105,7 +105,9 @@ class NeRFRenderer(nn.Module):
             if self.opt.gui:
                 self.glctx = dr.RasterizeCudaContext() # support at most 2048 resolution.
             else:
-                self.glctx = dr.RasterizeGLContext(output_db=False) # will crash if using GUI...
+                # Added to make sure no GL is needed.
+                self.glctx = dr.RasterizeCudaContext()
+                #self.glctx = dr.RasterizeGLContext(output_db=False) # will crash if using GUI...
 
             # sequentially load cascaded meshes
             vertices = []
@@ -845,9 +847,8 @@ class NeRFRenderer(nn.Module):
         indices = self.triangles_errors_id.view(-1).long()
         mask = (indices >= 0)
 
-        indices = indices[mask].contiguous()
+        indices = indices[mask].contiguous().long()
         values = loss.view(-1)[mask].contiguous()
-
         global TORCH_SCATTER
 
         if TORCH_SCATTER is None:
@@ -875,7 +876,7 @@ class NeRFRenderer(nn.Module):
         mask = torch.zeros_like(triangles[:, 0]) # [M,], for face.
 
         if self.glctx is None:
-            self.glctx = dr.RasterizeGLContext(output_db=False)
+            self.glctx = dr.RasterizeCudaContext()
 
         for mvp in tqdm.tqdm(mvps):
 
