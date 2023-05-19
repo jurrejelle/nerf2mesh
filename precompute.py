@@ -2,7 +2,7 @@ import argparse
 import cv2
 import os
 import numpy as np
-from sklearn.cluster import KMeans
+from sklearn.cluster import KMeans, DBSCAN
 import json
 import torch.nn as nn
 
@@ -227,7 +227,7 @@ def precompute(path, clusters=64, mappingResolution=512):
     unique, counts = np.unique(specularArray, axis=0, return_counts=True)
 
     # Perform Weighted k-means clustering 
-    kmeans = KMeans(n_clusters=clusters, random_state=0, verbose=3, max_iter=100).fit(unique, sample_weight=counts)
+    kmeans = KMeans(n_clusters=clusters, random_state=0, verbose=3).fit(unique, sample_weight=counts)
 
     # Get output labels
     labels = kmeans.predict(specularArray).reshape(resolution,resolution)
@@ -238,10 +238,22 @@ def precompute(path, clusters=64, mappingResolution=512):
     padded_labels[:,:,1] = labels
     padded_labels[:,:,2] = labels
 
-    # TODO: Maybe cluster this in some way? rather than making [x,x,x] colors
-
     # Get output centers
     centers = kmeans.cluster_centers_
+    
+    # Generate data based on just closest cluster:
+    mean_absolute_error = np.asarray([0,0,0], dtype=np.float64)
+    for i in range(resolution):
+        for j in range(resolution):
+            currentLabel = labels[i,j]
+            currentCluster = centers[currentLabel] * 255.0
+            originalColor = specularArrayOrig[i,j,:]
+            colordiff = abs(currentCluster - originalColor)
+            mean_absolute_error += colordiff
+    mean_absolute_error = mean_absolute_error / (resolution**2)
+
+    print(f"Mean Absolute Error based on color from first cluster: {mean_absolute_error}")
+
 
     # Initialize all the MLP stuff
     mlp_json = json.load(open(os.path.join(stage1_path, "mlp.json"), "r"))
@@ -296,4 +308,4 @@ if __name__ == '__main__':
      
     opt = parser.parse_args()
     precompute(opt.workspace, opt.clusters, opt.mapping_resolution)
-    check_images(opt.workspace, opt.clusters, opt.mapping_resolution)
+    #check_images(opt.workspace, opt.clusters, opt.mapping_resolution)
