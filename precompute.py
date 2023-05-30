@@ -5,6 +5,7 @@ import numpy as np
 from sklearn.cluster import KMeans, DBSCAN
 import json
 import torch.nn as nn
+import colorsys
 
 # 6 -> 32 -> 3
 def evaluateNetwork(f0 : np.ndarray, viewdir : np.ndarray, weightsZero, weightsOne):
@@ -83,6 +84,30 @@ def evaluateNetwork_unit(f0 : np.ndarray, viewdir : np.ndarray, weightsZero, wei
     result = result[:,:-1]
 
     return 1.0 / (1.0 + np.exp(-result))
+
+def rgb2hsv(rgb):
+    """ convert RGB to HSV color space
+
+    :param rgb: np.ndarray
+    :return: np.ndarray
+    """
+
+    rgb = rgb.astype('float')
+    maxv = np.amax(rgb, axis=2)
+    maxc = np.argmax(rgb, axis=2)
+    minv = np.amin(rgb, axis=2)
+    minc = np.argmin(rgb, axis=2)
+
+    hsv = np.zeros(rgb.shape, dtype='float')
+    hsv[maxc == minc, 0] = np.zeros(hsv[maxc == minc, 0].shape)
+    hsv[maxc == 0, 0] = (((rgb[..., 1] - rgb[..., 2]) * 60.0 / (maxv - minv + np.spacing(1))) % 360.0)[maxc == 0]
+    hsv[maxc == 1, 0] = (((rgb[..., 2] - rgb[..., 0]) * 60.0 / (maxv - minv + np.spacing(1))) + 120.0)[maxc == 1]
+    hsv[maxc == 2, 0] = (((rgb[..., 0] - rgb[..., 1]) * 60.0 / (maxv - minv + np.spacing(1))) + 240.0)[maxc == 2]
+    hsv[maxv == 0, 1] = np.zeros(hsv[maxv == 0, 1].shape)
+    hsv[maxv != 0, 1] = (1 - minv / (maxv + np.spacing(1)))[maxv != 0]
+    hsv[..., 2] = maxv
+
+    return hsv
 
             
 """
@@ -195,18 +220,73 @@ def create_octahedron_mapping(resolution, f0, weightsZero, weightsOne):
     return output_array
 
 
-
-
 def norm(x): 
     return x / np.linalg.norm(x)
+
+# From https://stackoverflow.com/questions/9600801/evenly-distributing-n-points-on-a-sphere
+def generateEvenlySpacedPoints(num_pts):
+    indices = np.arange(0, num_pts, dtype=float) + 0.5
+
+    phi = np.arccos(1 - 2*indices/num_pts)
+    theta = np.pi * (1 + 5**0.5) * indices
+
+    x, y, z = np.cos(theta) * np.sin(phi), np.sin(theta) * np.sin(phi), np.cos(phi)
+    return np.column_stack((x,y,z))
+
+
+identifierArray = generateEvenlySpacedPoints(50)
+def generateIdentifier(input_color, weightsZero, weightsOne):
+    evalAtDirection = lambda dir: evaluateNetwork(input_color, dir, weightsZero, weightsOne)
+    #return rgb2hsv(np.array([evalAtDirection(identDirection) for identDirection in identifierArray]))
+    return np.array([evalAtDirection(identDirection) for identDirection in identifierArray])
+
+# Takes in an array, and returns:
+#    The unique values
+#    The weight of that unique value
+#    The indices in the unique array that the original value can be found
+def uniques(inputArray):
+    size = inputArray.shape[0]
+    uniques = np.zeros((size, 3))
+    weights = np.zeros(size)
+    indices = np.zeros(size, dtype=np.uint32)
+    last_color = 0
+    color_dict = {}
+
+    for index, color in enumerate(inputArray):
+        if tuple(color) in color_dict:
+            current_index = color_dict[tuple(color)]
+        else:
+            current_index = last_color
+            uniques[current_index] = color
+            color_dict[tuple(color)] = current_index
+            last_color += 1
+
+        indices[index] = current_index
+        weights[current_index] += 1
+
+    # Cut off the arrays at last_color index
+    uniques = uniques[:last_color]
+    weights = weights[:last_color]
+
+    return uniques, weights, indices
+
+
 
 def precompute(path, clusters=64, mappingResolution=512):
     check()
     stage1_path = os.path.join(path, 'mesh_stage1')
+
+    new_workspace = os.path.join(path, 'mesh_stage2')
+    os.makedirs(new_workspace, exist_ok=True) 
+    
+    # Initialize all the MLP stuff
+    mlp_json = json.load(open(os.path.join(stage1_path, "mlp.json"), "r"))
+    weightsZero = np.asarray(mlp_json["net.0.weight"])
+    weightsOne = np.asarray(mlp_json["net.1.weight"])
+
+
     img = cv2.imread(os.path.join(stage1_path, 'feat1_0.png'), cv2.COLOR_BGR2RGB)
     specularArrayOrig = np.asarray(img[:,:])
-    print(specularArrayOrig[0,0])
-
     resolution = specularArrayOrig.shape[0]
     
     # Assert that our original shape is square and r,g,b
@@ -224,74 +304,89 @@ def precompute(path, clusters=64, mappingResolution=512):
     specularArray = specularArray / 255.0
 
     # Prepare the dataset since a lot of the colors will be the same
-    unique, counts = np.unique(specularArray, axis=0, return_counts=True)
+    unique_inputs, weights, indices = uniques(specularArray)
+
+    # Garbage collection to free some memory
+    specularArray = None
+    
+    # Create unique identifiers for each unique datapoint in our input array
+    print("Start of generating identifiers")
+    unique_outputs = np.array([generateIdentifier(unique_input, weightsZero, weightsOne) for unique_input in unique_inputs])
+
+
+    # Transform the dataset so it can be used for k-means clustering, namely one big array per pixel
+    unique_outputs = unique_outputs.reshape(unique_outputs.shape[0], -1)
+
+    print(f"Done generating identifiers, output shape: {unique_outputs.shape}")
 
     # Perform Weighted k-means clustering 
-    kmeans = KMeans(n_clusters=clusters, random_state=0, verbose=3).fit(unique, sample_weight=counts)
+    kmeans = KMeans(n_clusters=clusters, random_state=0, verbose=3).fit(unique_outputs, sample_weight=weights)
+    weights = None
 
-    # Get output labels
-    labels = kmeans.predict(specularArray).reshape(resolution,resolution)
+    # Assign clusters to each input value using the unique_inputs/unique_outputs pair we defined above
+    input_clusters = unique_outputs[indices]
+
+    # Get output labels 
+    labels = kmeans.predict(input_clusters).reshape(resolution,resolution)
+    print("Done assigning labels")
 
     # Store output labels in clusters of rgb brightness (i / clusters * 255)
     padded_labels = np.zeros((resolution, resolution, 3), dtype=np.float32)
     padded_labels[:,:,0] = labels
     padded_labels[:,:,1] = labels
     padded_labels[:,:,2] = labels
-
-    # Get output centers
-    centers = kmeans.cluster_centers_
     
-    # Generate data based on just closest cluster:
-    mean_absolute_error = np.asarray([0,0,0], dtype=np.float64)
-    for i in range(resolution):
-        for j in range(resolution):
-            currentLabel = labels[i,j]
-            currentCluster = centers[currentLabel] * 255.0
-            originalColor = specularArrayOrig[i,j,:]
-            colordiff = abs(currentCluster - originalColor)
-            mean_absolute_error += colordiff
-    mean_absolute_error = mean_absolute_error / (resolution**2)
-
-    print(f"Mean Absolute Error based on color from first cluster: {mean_absolute_error}")
-
-
-    # Initialize all the MLP stuff
-    mlp_json = json.load(open(os.path.join(stage1_path, "mlp.json"), "r"))
-    weightsZero = np.asarray(mlp_json["net.0.weight"])
-    weightsOne = np.asarray(mlp_json["net.1.weight"])
-
-    mappings = []
-    for i, center in enumerate(centers):
-        mappings.append(create_octahedron_mapping(mappingResolution, center, weightsZero, weightsOne))
-        print(f"Cluster {i}/{len(centers)} done")
-
-    
-    mapping_width = int(np.sqrt(clusters))
-    mapping_rows = []
-    print(f"Concatinating all {clusters} clusters into one atlas")
-    for i in range(mapping_width):
-        mapping_rows.append(np.concatenate(mappings[i*mapping_width : (i+1) * mapping_width], axis=1))
-    mappings_final = np.concatenate(mapping_rows)
-
     # Change from [0,1] space to [0,255] space
-    mappings_final *= 255
-
-    mappings_final = mappings_final.astype(np.uint8)
     padded_labels = padded_labels.astype(np.uint8)
+    labels_mat = cv2.cvtColor(padded_labels[..., :3], cv2.COLOR_RGB2BGR)
+    print("Saving labels_map.png")
+    cv2.imwrite(os.path.join(new_workspace, f'labels_map.png'), labels_mat,  [cv2.IMWRITE_PNG_COMPRESSION, 0])
+
+    padded_labels = None
+    labels_mat = None
+
+    # Find the closest output to each cluster center
+    closest_outputs = []
+    cluster_centers = kmeans.cluster_centers_
+    kmeans = None
+
+    for center in cluster_centers:
+        distances = np.linalg.norm(unique_outputs - center, axis=1)
+        closest_output_index = np.argmin(distances)
+        closest_output = unique_outputs[closest_output_index]
+        closest_outputs.append(closest_output)
+
+    # Find the corresponding input for each closest output
+    closest_inputs = unique_inputs[np.isin(unique_outputs, closest_outputs).all(axis=1)]
+
+    print("Done calculating inputs for cluster centers")
+    # TODO: FIND NEW METRIC FOR ACCURACY OF THE CLUSTERING
+    np.save(os.path.join(new_workspace, f'clusters.json'), closest_inputs)
+
+    unique_outputs = None
+    unique_inputs = None
+    input_clusters = None
+
+    print("Generating octahedral mappings for clusters:")
+    num_clusters = len(closest_inputs)
+    mapping_width = int(np.sqrt(num_clusters))
+    mappings_final = np.zeros((mapping_width * mappingResolution, mapping_width * mappingResolution, 3), dtype=np.uint8)  # Initialize mappings_final array
+
+    for i, center in enumerate(closest_inputs):
+        mapping = create_octahedron_mapping(mappingResolution, center, weightsZero, weightsOne)
+        # Convert from [0,1] space to [0,255] space
+        mapping *= 255
+        mapping = mapping.astype(np.uint8)
+        row = i // mapping_width
+        col = i % mapping_width
+        mappings_final[row * mappingResolution:(row + 1) * mappingResolution, col * mappingResolution:(col + 1) * mappingResolution] = mapping
+        print(f"Cluster {i}/{num_clusters} done")
+    
 
 
     octahedron_mat = cv2.cvtColor(mappings_final[..., :3], cv2.COLOR_RGB2BGR)
-    labels_mat = cv2.cvtColor(padded_labels[..., :3], cv2.COLOR_RGB2BGR)
-
-    new_workspace = os.path.join(path, 'mesh_stage2')
-    os.makedirs(new_workspace, exist_ok=True) 
-
     print("Saving octahedron_maps.png")
-    cv2.imwrite(os.path.join(new_workspace, f'octahedron_maps.png'), octahedron_mat,  [cv2.IMWRITE_PNG_COMPRESSION, 0]) 
-    #cv2.imwrite(os.path.join(new_workspace, f'octahedron_maps.jpg'), octahedron_mat) 
-    print("Saving labels_map.png")
-    cv2.imwrite(os.path.join(new_workspace, f'labels_map.png'), labels_mat,  [cv2.IMWRITE_PNG_COMPRESSION, 0])
-    #cv2.imwrite(os.path.join(new_workspace, f'labels_map.jpg'), labels_mat)
+    cv2.imwrite(os.path.join(new_workspace, f'octahedron_maps.png'), octahedron_mat,  [cv2.IMWRITE_PNG_COMPRESSION, 0])
 
 def check_images(path, clusters=64, mappingResolution=512):
     new_workspace = os.path.join(path, 'mesh_stage2')

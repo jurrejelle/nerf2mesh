@@ -108,6 +108,7 @@ vec3 evaluateNetwork(vec2 vUv, vec3 viewdir) {
     ivec2 textureSize = textureSize( tOctahedronAtlas, 0);
 
     vec4 vLabel = texture( tLabelMap, vUv );
+    
 
     int iLabel = int(round(vLabel.x * 255.0f));
     float iLabelX = float(iLabel % clusters_sqrt);
@@ -131,7 +132,8 @@ vec3 testfunc(vec2 vUv, vec3 viewdir) {
     ivec2 textureSize = textureSize( tOctahedronAtlas, 0);
 
     vec4 vLabel = texture( tLabelMap, vUv );
-    return octahedral_unmapping(octahedral_mapping(vec3(1.0, 2.0, 3.0)));
+    vLabel = vec4(1.0,1.0,1.0,1.0);
+    //return octahedral_unmapping(octahedral_mapping(vec3(1.0, 2.0, 3.0)));
     int iLabel = int(round(vLabel.x * 255.0f));
     float iLabelX = float(iLabel % clusters_sqrt);
     float iLabelY = float(iLabel / clusters_sqrt);
@@ -154,7 +156,7 @@ void main() {
         pc_FragColor.rgb = diffuse.rgb;
     } else {
         if (mode == 2) { // specular
-            pc_FragColor.rgb = evaluateNetwork(vUv, normalize(rayDirection));
+            pc_FragColor.rgb = testfunc(vUv, normalize(rayDirection));
         } else { // full
             vec4 diffuse = texture( tDiffuse, vUv );
             pc_FragColor.rgb = clamp(diffuse.rgb + evaluateNetwork(vUv, normalize(rayDirection)), 0.0f, 1.0f);
@@ -413,7 +415,7 @@ function init() {
                 tex3.magFilter = THREE.NearestFilter;
                 tex3.minFilter = THREE.NearestFilter;
 
-                var Clusters = 1048
+                var Clusters = 256
 
                 let newmat = new THREE.RawShaderMaterial({
                     side: THREE.DoubleSide,
