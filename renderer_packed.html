@@ -160,8 +160,8 @@ vec3 evaluateNetwork(vec2 vUv, vec3 viewdir) {
     
 
     int iLabel = int(round(vLabel.x * 255.0f));
-    float iLabelX = float(iLabel % clusters_sqrt);
-    float iLabelY = float(iLabel / clusters_sqrt);
+    float iLabelY = float(iLabel % clusters_sqrt);
+    float iLabelX = float(iLabel / clusters_sqrt);
 
     vec2 octaUV = octahedral_mapping(viewdir);
 
@@ -468,7 +468,7 @@ function init() {
                 tex3.magFilter = THREE.NearestFilter;
                 tex3.minFilter = THREE.NearestFilter;
 
-                var Clusters = 25
+                var Clusters = 16
 
                 let newmat = new THREE.RawShaderMaterial({
                     side: THREE.DoubleSide,

@@ -87,29 +87,6 @@ def evaluateNetwork_unit(f0 : np.ndarray, viewdir : np.ndarray, weightsZero, wei
 
     return 1.0 / (1.0 + np.exp(-result))
 
-def rgb2hsv(rgb):
-    """ convert RGB to HSV color space
-
-    :param rgb: np.ndarray
-    :return: np.ndarray
-    """
-
-    rgb = rgb.astype('float')
-    maxv = np.amax(rgb, axis=2)
-    maxc = np.argmax(rgb, axis=2)
-    minv = np.amin(rgb, axis=2)
-    minc = np.argmin(rgb, axis=2)
-
-    hsv = np.zeros(rgb.shape, dtype='float')
-    hsv[maxc == minc, 0] = np.zeros(hsv[maxc == minc, 0].shape)
-    hsv[maxc == 0, 0] = (((rgb[..., 1] - rgb[..., 2]) * 60.0 / (maxv - minv + np.spacing(1))) % 360.0)[maxc == 0]
-    hsv[maxc == 1, 0] = (((rgb[..., 2] - rgb[..., 0]) * 60.0 / (maxv - minv + np.spacing(1))) + 120.0)[maxc == 1]
-    hsv[maxc == 2, 0] = (((rgb[..., 0] - rgb[..., 1]) * 60.0 / (maxv - minv + np.spacing(1))) + 240.0)[maxc == 2]
-    hsv[maxv == 0, 1] = np.zeros(hsv[maxv == 0, 1].shape)
-    hsv[maxv != 0, 1] = (1 - minv / (maxv + np.spacing(1)))[maxv != 0]
-    hsv[..., 2] = maxv
-
-    return hsv
 
             
 """
@@ -244,11 +221,14 @@ def generateEvenlySpacedPoints(num_pts):
     return np.column_stack((x,y,z))
 
 
-identifierArray = generateEvenlySpacedPoints(25)
+identifierArray = generateEvenlySpacedPoints(50)
 def generateIdentifier(input_color, weightsZero, weightsOne):
     evalAtDirection = lambda dir: evaluateNetwork(input_color, dir, weightsZero, weightsOne)
-    #return rgb2hsv(np.array([evalAtDirection(identDirection) for identDirection in identifierArray]))
-    return np.array([evalAtDirection(identDirection) for identDirection in identifierArray])
+    color = np.array([evalAtDirection(identDirection) for identDirection in identifierArray])
+    hsv = [colorsys.rgb_to_hsv(c[0][0], c[0][1], c[0][2]) for c in color]
+    vals = [(c[2] * 9 + c[0] * 3 + c[1]) / 13 for c in hsv]
+    # return rgb2hsv(np.array([evalAtDirection(identDirection) for identDirection in identifierArray]))
+    return vals
 
 # Takes in an array, and returns:
 #    The unique values
@@ -281,6 +261,19 @@ def uniques(inputArray):
     return uniques, weights, indices
 
 
+def get_labels(unique_outputs, cluster_outputs):
+    labels = np.zeros(len(unique_outputs))
+    for i in range(len(unique_outputs)):
+        minmse = 10000000000000000
+        cluster = -1
+        for j, clusterdata in enumerate(cluster_outputs):
+            error = np.linalg.norm(unique_outputs[i] - clusterdata)
+            mse = error / len(clusterdata)
+            if(mse < minmse):
+                minmse = mse
+                cluster = j
+        labels[i] = cluster
+    return labels
 
 def precompute(path, clusters=64, mappingResolution=512):
     check()
@@ -295,7 +288,7 @@ def precompute(path, clusters=64, mappingResolution=512):
     weightsOne = np.asarray(mlp_json["net.1.weight"])
 
 
-    file = Image.open(os.path.join(stage1_path, 'feat2_0.png')) #SAYS 2, #TODO FIX
+    file = Image.open(os.path.join(stage1_path, 'feat1_0.png')) #SAYS 2, #TODO FIX
     specularArrayOrig = imageformat_to_data(np.array(file))
     resolution = file.size[0]
     
@@ -343,28 +336,6 @@ def precompute(path, clusters=64, mappingResolution=512):
     kmeans = KMeans(n_clusters=clusters, random_state=0, verbose=3).fit(unique_outputs, sample_weight=weights)
     weights = None
 
-    # Assign clusters to each input value using the unique_inputs/unique_outputs pair we defined above
-    input_clusters = unique_outputs[indices]
-
-    # Get output labels 
-    labels = kmeans.predict(input_clusters).reshape(resolution,resolution)
-    print("Done assigning labels")
-
-    # Store output labels in clusters of rgb brightness (i)
-    padded_labels = np.zeros((resolution, resolution, 3), dtype=np.uint8)
-    padded_labels[:,:,0] = labels
-    padded_labels[:,:,1] = labels
-    padded_labels[:,:,2] = labels
-    
-    # Change from [0,1] space to [0,255] space
-    labels_image = Image.fromarray(data_to_imageformat(padded_labels[..., :3]))
-    print("Saving labels_map.png")
-    labels_image.save(os.path.join(new_workspace, f'labels_map.png'))
-    labels_image.close()
-
-    cluster = labels[0][0]
-
-
 
     # Find the closest output to each cluster center
     closest_outputs = []
@@ -380,21 +351,9 @@ def precompute(path, clusters=64, mappingResolution=512):
     # Find the corresponding input for each closest output
     closest_inputs = [unique_inputs[np.where(unique_outputs == x)[0][0]] for x in closest_outputs]
 
-    for j in range(clusters):
-        clusterData = generateIdentifier(closest_inputs[j], weightsZero, weightsOne)
-        error = 0
-        for i in range(len(testData)):
-            error += np.linalg.norm(testData[i][0] - clusterData[i][0])
-        mse = error / len(testData)
-        print(f"cluster{j}, mse:{mse}")
-
     print("Done calculating inputs for cluster centers")
     # TODO: FIND NEW METRIC FOR ACCURACY OF THE CLUSTERING
     np.save(os.path.join(new_workspace, f'clusters.json'), closest_inputs)
-
-    unique_outputs = None
-    unique_inputs = None
-    input_clusters = None
 
     print("Generating octahedral mappings for clusters:")
     num_clusters = len(closest_inputs)
@@ -420,8 +379,26 @@ def precompute(path, clusters=64, mappingResolution=512):
     octahedron_map.save(os.path.join(new_workspace, f'octahedron_maps.png'))
     octahedron_map.close()
 
-    # for i, target in enumerate(testData):
-    #     print(f"target: {target}, actual: {colors[i]}")
+    # Assign clusters to each input value using the unique_inputs/unique_outputs pair we defined above
+    # input_clusters = unique_outputs[indices]
+
+    # Get output labels 
+    
+    labels = get_labels(unique_outputs, closest_outputs)[indices].reshape(resolution, resolution)
+    # labels = kmeans.predict(input_clusters).reshape(resolution,resolution)
+    print("Done assigning labels")
+
+    # Store output labels in clusters of rgb brightness (i)
+    padded_labels = np.zeros((resolution, resolution, 3), dtype=np.uint8)
+    padded_labels[:,:,0] = labels
+    padded_labels[:,:,1] = labels
+    padded_labels[:,:,2] = labels
+    
+    # Change from [0,1] space to [0,255] space
+    labels_image = Image.fromarray(data_to_imageformat(padded_labels[..., :3]))
+    print("Saving labels_map.png")
+    labels_image.save(os.path.join(new_workspace, f'labels_map.png'))
+    labels_image.close()
 
     """
     for i in range(num_clusters):
