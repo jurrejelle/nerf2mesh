@@ -67,23 +67,67 @@ uniform highp sampler2D tSpecular;
 uniform highp sampler2D tOctahedronAtlas;
 uniform highp sampler2D tLabelMap;
 
+
+// def octahedral_mapping(v):
+
+//     # Project onto octahedron
+//     v /= np.abs(v[0]) + np.abs(v[1]) + np.abs(v[2])
+
+//     # Out-folding of the downward faces
+//     uv = np.asarray([0,0], dtype=np.float32)
+//     if ( v[1] < -0.000001 ):
+//         if sign(v[0]) * sign(v[2]) == 1:
+//             uv[1] = (1 - np.abs(v[0])) * sign(v[0])
+//             uv[0] = (1 - np.abs(v[2])) * sign(v[2])
+//         if sign(v[0]) * sign(v[2]) == -1:
+//             uv[1] = (1 - np.abs(v[0])) * -sign(v[0])
+//             uv[0] = (1 - np.abs(v[2])) * -sign(v[2])
+//     else:
+//         uv[0] = v[0]
+//         uv[1] = v[2]
+
+//     # This output is in the [-1, 1] space
+//     # Mapping to [0;1]ˆ2 texture space
+//     return uv * 0.5 + 0.5
+
+// def octahedral_unmapping(uv):
+//     uv = uv * 2 - 1
+//     v = np.asarray([
+//         uv[0],
+//         1 - np.abs(uv[0]) - np.abs(uv[1]),
+//         uv[1]
+//     ], dtype=np.float64)
+//     if np.abs(uv[0]) + np.abs(uv[1]) > 1:
+//         if sign(uv[0]) * sign(uv[1]) == 1:
+//             v[2] = (1 - np.abs(uv[0])) * sign(uv[0])
+//             v[0] = (1 - np.abs(uv[1])) * sign(uv[1])
+//         if sign(uv[0]) * sign(uv[1]) == -1:
+//             v[2] = (1 - np.abs(uv[0])) * -sign(uv[0])
+//             v[0] = (1 - np.abs(uv[1])) * -sign(uv[1])
+//     return v
+
 vec2 octahedral_mapping(vec3 co)
 {
     // projection onto octahedron
     co /= dot( vec3(1), abs(co) );
 
     // out-folding of the downward faces
-    vec2 r = vec2(0.0f, 0.0f);
-    if ( co.y < 0.0f ) {
-        r.x = (1.0f - abs(-co.z)) * sign(co.x);
-        r.y = (1.0f - abs( co.x)) * sign(-co.z);
+    vec2 uv = vec2(0.0f, 0.0f);
+    if ( co.y < -0.000001f ) {
+        if (sign(co.x) * sign(co.z) == 1.0){
+            uv.y = (1.0f - abs(co.x)) * sign(co.x);
+            uv.x = (1.0f - abs(co.z)) * sign(co.z);
+        } else {
+            uv.y = (1.0f - abs(co.x)) * -sign(co.x);
+            uv.x = (1.0f - abs(co.z)) * -sign(co.z);
+        }
     } else {
-        r.x = co.x;
-        r.y = -co.z;
+        uv.x = co.x;
+        uv.y = co.z;
     }
 
     // mapping to [0;1]ˆ2 texture space
-    return r * 0.5f + 0.5f;
+    return uv * 0.5f + 0.5f;
 }
 
 vec3 octahedral_unmapping(vec2 co)
@@ -91,11 +135,16 @@ vec3 octahedral_unmapping(vec2 co)
     co = co * 2.0 - 1.0;
 
     vec2 abs_co = abs(co);
-    vec3 v = vec3(co.x, 1.0 - (abs_co.x + abs_co.y), -co.y);
+    vec3 v = vec3(co.x, 1.0 - (abs_co.x + abs_co.y), co.y);
 
     if ( abs_co.x + abs_co.y > 1.0 ) {
-        v.x = (abs(-co.y) - 1.0) * -sign(co.x);
-        v.z = (abs(co.x) - 1.0) * -sign(-co.y);
+        if (sign(co.x) * sign(co.y) == 1.0){
+            v.z = (1.0 - abs_co.x) * sign(co.x);
+            v.x = (1.0 - abs_co.y) * sign(co.y);
+        } else {
+            v.z = (1.0 - abs_co.x) * -sign(co.x);
+            v.x = (1.0 - abs_co.y) * -sign(co.y);
+        }
     }
 
     return v;
@@ -151,12 +200,16 @@ vec3 testfunc(vec2 vUv, vec3 viewdir) {
     return finalTexel.xyz;
 }
 void main() {    
+    // vec2 testUV = vec2(0.678431f, 0.254901f);
+    // vec2 testUV = vec2(1.0f/4096.0f, 1.0f/4096.0f);
+    // vec3 testDir = vec3(0, 0.4588235f, 0);
     if (mode == 1) { // diffuse
         vec4 diffuse = texture( tDiffuse, vUv );
         pc_FragColor.rgb = diffuse.rgb;
     } else {
         if (mode == 2) { // specular
-            pc_FragColor.rgb = testfunc(vUv, normalize(rayDirection));
+            pc_FragColor.rgb = evaluateNetwork(vUv, normalize(rayDirection));
+            // pc_FragColor.rgb = evaluateNetwork(testUV, testDir);
         } else { // full
             vec4 diffuse = texture( tDiffuse, vUv );
             pc_FragColor.rgb = clamp(diffuse.rgb + evaluateNetwork(vUv, normalize(rayDirection)), 0.0f, 1.0f);
@@ -415,7 +468,7 @@ function init() {
                 tex3.magFilter = THREE.NearestFilter;
                 tex3.minFilter = THREE.NearestFilter;
 
-                var Clusters = 256
+                var Clusters = 25
 
                 let newmat = new THREE.RawShaderMaterial({
                     side: THREE.DoubleSide,

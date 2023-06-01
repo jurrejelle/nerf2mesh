@@ -6,6 +6,8 @@ from sklearn.cluster import KMeans, DBSCAN
 import json
 import torch.nn as nn
 import colorsys
+from PIL import Image
+import matplotlib.pyplot as plt
 
 # 6 -> 32 -> 3
 def evaluateNetwork(f0 : np.ndarray, viewdir : np.ndarray, weightsZero, weightsOne):
@@ -140,45 +142,52 @@ vec3 octahedral_unmapping(vec2 co)
 }
 
 """
-def sign(x):
-    return -1 if x < 0 else 1
+def sign(a):
+    if(a<=0):
+        return -1
+    return 1
+def octahedral_mapping(v):
 
-def octahedral_mapping(view_direction):
-    p = view_direction
-    
     # Project onto octahedron
-    p /= np.abs(p[0]) + np.abs(p[1]) + np.abs(p[2])
+    v /= np.abs(v[0]) + np.abs(v[1]) + np.abs(v[2])
 
     # Out-folding of the downward faces
-    r = np.asarray([0,0], dtype=np.float32)
-    if ( p[1] < 0.0 ): 
-        r[0] = sign(p[0]) * (1-np.abs(-p[2]))
-        r[1] = sign(-p[2]) * (1-np.abs(p[0]))
+    uv = np.asarray([0,0], dtype=np.float32)
+    if ( v[1] < -0.000001 ):
+        if sign(v[0]) * sign(v[2]) == 1:
+            uv[1] = (1 - np.abs(v[0])) * sign(v[0])
+            uv[0] = (1 - np.abs(v[2])) * sign(v[2])
+        if sign(v[0]) * sign(v[2]) == -1:
+            uv[1] = (1 - np.abs(v[0])) * -sign(v[0])
+            uv[0] = (1 - np.abs(v[2])) * -sign(v[2])
     else:
-        r[0] = p[0]
-        r[1] = -p[2]
-
+        uv[0] = v[0]
+        uv[1] = v[2]
 
     # This output is in the [-1, 1] space
-	# Mapping to [0;1]ˆ2 texture space
-    return r * 0.5 + 0.5
+    # Mapping to [0;1]ˆ2 texture space
+    return uv * 0.5 + 0.5
 
 def octahedral_unmapping(uv):
     uv = uv * 2 - 1
     v = np.asarray([
         uv[0],
         1 - np.abs(uv[0]) - np.abs(uv[1]),
-        -uv[1]
+        uv[1]
     ], dtype=np.float64)
     if np.abs(uv[0]) + np.abs(uv[1]) > 1:
-        v[0] = (np.abs(-uv[1]) - 1) * -sign(uv[0])
-        v[2] = (np.abs(uv[0]) - 1) * -sign(-uv[1])
-
+        if sign(uv[0]) * sign(uv[1]) == 1:
+            v[2] = (1 - np.abs(uv[0])) * sign(uv[0])
+            v[0] = (1 - np.abs(uv[1])) * sign(uv[1])
+        if sign(uv[0]) * sign(uv[1]) == -1:
+            v[2] = (1 - np.abs(uv[0])) * -sign(uv[0])
+            v[0] = (1 - np.abs(uv[1])) * -sign(uv[1])
     return v
 
+
 def check(resolution=512):
-    for x in range(resolution):
-        for y in range(resolution):
+    for x in range(1,resolution):
+        for y in range(1,resolution):
 
             # Map to [0,1]**2 space
             original_uv = np.asarray([x,y], dtype=np.float32)
@@ -186,16 +195,17 @@ def check(resolution=512):
             modified_uv = original_uv / resolution
 
             # Get normalized view direction
-            view_direction = norm(octahedral_unmapping(modified_uv))
+            view_direction = octahedral_unmapping(modified_uv)
             
             # Translate back into uvs
-            uv = octahedral_mapping(view_direction) * resolution
-            if not (original_uv - uv < 1e-7).all():
-                print(f"original uv: {original_uv}")
+            uv = octahedral_mapping(view_direction)
+            if (not (modified_uv - uv < 1e-7).all()):
+                print(f"original uv: {modified_uv}")
                 print(f"view direction: {view_direction}")
                 print(f"re-constructed uvs: {uv}")
+                print(modified_uv - uv)
                 print()
-                exit()
+                exit() 
 
             
 
@@ -209,13 +219,13 @@ def create_octahedron_mapping(resolution, f0, weightsZero, weightsOne):
             modified_uv = original_uv / resolution
 
             # Get normalized view direction
-            view_direction = norm(octahedral_unmapping(modified_uv))
-
+            view_direction = octahedral_unmapping(modified_uv)
+            
             # Pass the direction vector to the evaluate_direction function
             pixel_color = evaluateNetwork(f0, norm(view_direction), weightsZero, weightsOne)
-
+            # pixel_color = view_direction * 0.5 + 0.5
             # Set the output pixel color
-            output_array[y, x, :] = pixel_color
+            output_array[x, y, :] = pixel_color
 
     return output_array
 
@@ -234,7 +244,7 @@ def generateEvenlySpacedPoints(num_pts):
     return np.column_stack((x,y,z))
 
 
-identifierArray = generateEvenlySpacedPoints(50)
+identifierArray = generateEvenlySpacedPoints(25)
 def generateIdentifier(input_color, weightsZero, weightsOne):
     evalAtDirection = lambda dir: evaluateNetwork(input_color, dir, weightsZero, weightsOne)
     #return rgb2hsv(np.array([evalAtDirection(identDirection) for identDirection in identifierArray]))
@@ -285,15 +295,25 @@ def precompute(path, clusters=64, mappingResolution=512):
     weightsOne = np.asarray(mlp_json["net.1.weight"])
 
 
-    img = cv2.imread(os.path.join(stage1_path, 'feat1_0.png'), cv2.COLOR_BGR2RGB)
-    specularArrayOrig = np.asarray(img[:,:])
-    resolution = specularArrayOrig.shape[0]
+    file = Image.open(os.path.join(stage1_path, 'feat2_0.png')) #SAYS 2, #TODO FIX
+    specularArrayOrig = imageformat_to_data(np.array(file))
+    resolution = file.size[0]
     
     # Assert that our original shape is square and r,g,b
     assert specularArrayOrig.shape == (resolution, resolution, 3)
-    
+
+    """
+    uvs = (0.1, 0.15)
+
+    viewdir = norm(np.array([0, 0.8, 0.2]))
+    (uvx, uvy) = uvs
+    texture_sample = specularArrayOrig[int(uvx*resolution)][int(uvy*resolution)]/255
+    target = evaluateNetwork(texture_sample, viewdir, weightsZero, weightsOne)
+    """
+
     specularArray = specularArrayOrig.reshape(resolution*resolution, -1)
 
+    testData = generateIdentifier(specularArray[0], weightsZero, weightsOne)
 
     # Assert that reshaping back to original size gives original array
     assert np.array_equal(
@@ -330,20 +350,21 @@ def precompute(path, clusters=64, mappingResolution=512):
     labels = kmeans.predict(input_clusters).reshape(resolution,resolution)
     print("Done assigning labels")
 
-    # Store output labels in clusters of rgb brightness (i / clusters * 255)
-    padded_labels = np.zeros((resolution, resolution, 3), dtype=np.float32)
+    # Store output labels in clusters of rgb brightness (i)
+    padded_labels = np.zeros((resolution, resolution, 3), dtype=np.uint8)
     padded_labels[:,:,0] = labels
     padded_labels[:,:,1] = labels
     padded_labels[:,:,2] = labels
     
     # Change from [0,1] space to [0,255] space
-    padded_labels = padded_labels.astype(np.uint8)
-    labels_mat = cv2.cvtColor(padded_labels[..., :3], cv2.COLOR_RGB2BGR)
+    labels_image = Image.fromarray(data_to_imageformat(padded_labels[..., :3]))
     print("Saving labels_map.png")
-    cv2.imwrite(os.path.join(new_workspace, f'labels_map.png'), labels_mat,  [cv2.IMWRITE_PNG_COMPRESSION, 0])
+    labels_image.save(os.path.join(new_workspace, f'labels_map.png'))
+    labels_image.close()
 
-    padded_labels = None
-    labels_mat = None
+    cluster = labels[0][0]
+
+
 
     # Find the closest output to each cluster center
     closest_outputs = []
@@ -357,7 +378,15 @@ def precompute(path, clusters=64, mappingResolution=512):
         closest_outputs.append(closest_output)
 
     # Find the corresponding input for each closest output
-    closest_inputs = unique_inputs[np.isin(unique_outputs, closest_outputs).all(axis=1)]
+    closest_inputs = [unique_inputs[np.where(unique_outputs == x)[0][0]] for x in closest_outputs]
+
+    for j in range(clusters):
+        clusterData = generateIdentifier(closest_inputs[j], weightsZero, weightsOne)
+        error = 0
+        for i in range(len(testData)):
+            error += np.linalg.norm(testData[i][0] - clusterData[i][0])
+        mse = error / len(testData)
+        print(f"cluster{j}, mse:{mse}")
 
     print("Done calculating inputs for cluster centers")
     # TODO: FIND NEW METRIC FOR ACCURACY OF THE CLUSTERING
@@ -380,13 +409,47 @@ def precompute(path, clusters=64, mappingResolution=512):
         row = i // mapping_width
         col = i % mapping_width
         mappings_final[row * mappingResolution:(row + 1) * mappingResolution, col * mappingResolution:(col + 1) * mappingResolution] = mapping
-        print(f"Cluster {i}/{num_clusters} done")
-    
+        print(f"Cluster {i+1}/{num_clusters} done")
+
+    #     if i == cluster:
+    #         test_data = [mappingResolution * octahedral_mapping(dir) for dir in identifierArray]
+    #         uv = [[int(x) for x in y] for y in test_data]
+    #         colors = [mapping[uvi[0]][uvi[1]] for uvi in uv]
+    octahedron_map = Image.fromarray(data_to_imageformat(mappings_final[..., :3]))
+    print("Saving octahedron_map.png")
+    octahedron_map.save(os.path.join(new_workspace, f'octahedron_maps.png'))
+    octahedron_map.close()
+
+    # for i, target in enumerate(testData):
+    #     print(f"target: {target}, actual: {colors[i]}")
+
+    """
+    for i in range(num_clusters):
+        label = i
+        lx = label % mapping_width
+        ly = label // mapping_width
+        uv2 = octahedral_mapping(viewdir)
+        pixelx = int((lx + uv2[0]) * mappingResolution)
+        pixely = int((ly + uv2[1]) * mappingResolution)
+        value = mappings_final[pixelx][pixely]
+        print(texture_sample)
+        print(closest_inputs[i])
+        print(f"label: {i}")
+        print(f"target: {target*255}")
+        print(f"value: {value}")
+    """
 
 
-    octahedron_mat = cv2.cvtColor(mappings_final[..., :3], cv2.COLOR_RGB2BGR)
-    print("Saving octahedron_maps.png")
-    cv2.imwrite(os.path.join(new_workspace, f'octahedron_maps.png'), octahedron_mat,  [cv2.IMWRITE_PNG_COMPRESSION, 0])
+def data_to_imageformat(arr):
+    newArr  = np.swapaxes(arr, 0, 1) # [x][y][c]
+    newArr = newArr[::-1,:,:3] # [y][x][c]
+    return newArr
+
+
+def imageformat_to_data(arr):
+    newArr = arr[::-1,:,:3] # [y][x][c]
+    newArr  = np.swapaxes(newArr, 0, 1) # [x][y][c]
+    return newArr
 
 def check_images(path, clusters=64, mappingResolution=512):
     new_workspace = os.path.join(path, 'mesh_stage2')
@@ -404,3 +467,4 @@ if __name__ == '__main__':
     opt = parser.parse_args()
     precompute(opt.workspace, opt.clusters, opt.mapping_resolution)
     #check_images(opt.workspace, opt.clusters, opt.mapping_resolution)
+    
