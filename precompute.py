@@ -395,6 +395,8 @@ def precompute(path, clusters, mapping_resolution, output_dir, precompute_identi
     labels_image.close()
     times["end"] = time.time()
 
+    total_MAE = 0
+    total_MSE = 0
     if eval:
         print("Calculating MAE and MSE")
         times["mae_start"] = time.time()
@@ -447,8 +449,6 @@ def precompute(path, clusters, mapping_resolution, output_dir, precompute_identi
     else:
         times["mae_end"] = 0
         times["mae_start"] = 0
-        total_MAE = 0
-        total_MSE = 0
         
     export_data(times, clusters, closest_inputs_uniques.shape[0], resolution, mapping_resolution, len(unique_inputs), precompute_identifiers, evaluate_identifiers, total_MAE, total_MSE, path)
     print("All done :)")
