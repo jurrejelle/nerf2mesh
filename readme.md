@@ -1,3 +1,45 @@
+# Clustering addition to nerf2mesh
+
+This repository contains an implementation of this paper: [link soon]().
+The folder `paper_data` contains the data used to generate the results in this paper, as well as the results itself, based on the lego dataset from the nerf_synthetic source further down in this readme.
+
+# Install
+
+```bash
+git clone https://github.com/jurrejelle/nerf2mesh.git
+cd nerf2mesh
+```
+
+# Usage
+This tool assumes you have already ran nerf2mesh, and are left with a mesh_stage1 folder. 
+
+Once you have installed the requirements, you can run the pre-computer using 
+```bash
+python precompute.py --workspace paper_data/ --clusters 64 --mapping_resolution 256 --output_dir mesh_stage2/
+```
+
+# Parameters
+```bash
+--workspace # The workspace to find the original mesh_stage1 and store output folder to
+--clusters 64 # Number of clusers to create
+--mapping_resolution 256 # Number of pixels (256x256) each octahedron map should be
+--output_dir mesh_stage2 # Output directory within workspace
+--idents 100 # Number of identifying points to be used for clustering
+--eval [true|false] # Run evaluation (MSE/MAE) afterwards
+--eval_idents 100 # Number of identifying points to be used for evaluation
+--copy_old [true|false] # Copy over all the files of mesh_stage1
+```
+
+
+
+### Web Renderer
+To render full diffuse + specular clustered, you'll need to host this folder (e.g., by vscode live server), and open renderer_packed.html for further instructions.  
+These instructons are similar to running the original renderer, but renderer.html requires a mesh of stage 1, and renderer_packed.html requires a mesh that has been pre-computed.  
+
+
+
+
+
 # nerf2mesh
 
 

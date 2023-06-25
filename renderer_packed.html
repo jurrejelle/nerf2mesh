@@ -63,48 +63,8 @@ uniform int clusters;
 uniform int clusters_sqrt;
 
 uniform highp sampler2D tDiffuse;
-uniform highp sampler2D tSpecular;
 uniform highp sampler2D tOctahedronAtlas;
 uniform highp sampler2D tLabelMap;
-
-
-// def octahedral_mapping(v):
-
-//     # Project onto octahedron
-//     v /= np.abs(v[0]) + np.abs(v[1]) + np.abs(v[2])
-
-//     # Out-folding of the downward faces
-//     uv = np.asarray([0,0], dtype=np.float32)
-//     if ( v[1] < -0.000001 ):
-//         if sign(v[0]) * sign(v[2]) == 1:
-//             uv[1] = (1 - np.abs(v[0])) * sign(v[0])
-//             uv[0] = (1 - np.abs(v[2])) * sign(v[2])
-//         if sign(v[0]) * sign(v[2]) == -1:
-//             uv[1] = (1 - np.abs(v[0])) * -sign(v[0])
-//             uv[0] = (1 - np.abs(v[2])) * -sign(v[2])
-//     else:
-//         uv[0] = v[0]
-//         uv[1] = v[2]
-
-//     # This output is in the [-1, 1] space
-//     # Mapping to [0;1]ˆ2 texture space
-//     return uv * 0.5 + 0.5
-
-// def octahedral_unmapping(uv):
-//     uv = uv * 2 - 1
-//     v = np.asarray([
-//         uv[0],
-//         1 - np.abs(uv[0]) - np.abs(uv[1]),
-//         uv[1]
-//     ], dtype=np.float64)
-//     if np.abs(uv[0]) + np.abs(uv[1]) > 1:
-//         if sign(uv[0]) * sign(uv[1]) == 1:
-//             v[2] = (1 - np.abs(uv[0])) * sign(uv[0])
-//             v[0] = (1 - np.abs(uv[1])) * sign(uv[1])
-//         if sign(uv[0]) * sign(uv[1]) == -1:
-//             v[2] = (1 - np.abs(uv[0])) * -sign(uv[0])
-//             v[0] = (1 - np.abs(uv[1])) * -sign(uv[1])
-//     return v
 
 vec2 octahedral_mapping(vec3 co)
 {
@@ -158,13 +118,11 @@ vec3 evaluateNetwork(vec2 vUv, vec3 viewdir) {
 
     vec4 vLabel = texture( tLabelMap, vUv );
     
-
     int iLabel = int(round(vLabel.x * 255.0f));
-    float iLabelY = float(iLabel % clusters_sqrt);
     float iLabelX = float(iLabel / clusters_sqrt);
+    float iLabelY = float(iLabel % clusters_sqrt);
 
     vec2 octaUV = octahedral_mapping(viewdir);
-
     
     float oneOcta = float(textureSize.x / clusters_sqrt);
 
@@ -176,43 +134,17 @@ vec3 evaluateNetwork(vec2 vUv, vec3 viewdir) {
     return finalTexel.xyz;
 }
 
-vec3 testfunc(vec2 vUv, vec3 viewdir) {
-    // Width, height, (depth)
-    ivec2 textureSize = textureSize( tOctahedronAtlas, 0);
-
-    vec4 vLabel = texture( tLabelMap, vUv );
-    vLabel = vec4(1.0,1.0,1.0,1.0);
-    //return octahedral_unmapping(octahedral_mapping(vec3(1.0, 2.0, 3.0)));
-    int iLabel = int(round(vLabel.x * 255.0f));
-    float iLabelX = float(iLabel % clusters_sqrt);
-    float iLabelY = float(iLabel / clusters_sqrt);
-
-    vec2 octaUV = octahedral_mapping(viewdir);
-
-    
-    float oneOcta = float(textureSize.x / clusters_sqrt);
-
-    float mappingX = (iLabelX * oneOcta + octaUV.x * oneOcta) / float(textureSize.x);
-    float mappingY = (iLabelY * oneOcta + octaUV.y * oneOcta) / float(textureSize.y);
-
-    vec4 finalTexel = texture(tOctahedronAtlas, vec2(mappingX, mappingY));
-
-    return finalTexel.xyz;
-}
 void main() {    
-    // vec2 testUV = vec2(0.678431f, 0.254901f);
-    // vec2 testUV = vec2(1.0f/4096.0f, 1.0f/4096.0f);
-    // vec3 testDir = vec3(0, 0.4588235f, 0);
     if (mode == 1) { // diffuse
-        vec4 diffuse = texture( tDiffuse, vUv );
-        pc_FragColor.rgb = diffuse.rgb;
+        vec3 diffuse = texture( tDiffuse, vUv ).rgb;
+        pc_FragColor.rgb = diffuse;
     } else {
+        vec3 specular = evaluateNetwork(vUv, normalize(rayDirection));
         if (mode == 2) { // specular
-            pc_FragColor.rgb = evaluateNetwork(vUv, normalize(rayDirection));
-            // pc_FragColor.rgb = evaluateNetwork(testUV, testDir);
+            pc_FragColor.rgb = specular;
         } else { // full
-            vec4 diffuse = texture( tDiffuse, vUv );
-            pc_FragColor.rgb = clamp(diffuse.rgb + evaluateNetwork(vUv, normalize(rayDirection)), 0.0f, 1.0f);
+            vec3 diffuse = texture( tDiffuse, vUv ).rgb;
+            pc_FragColor.rgb = clamp(diffuse + specular, 0.0f, 1.0f);
         }
     }
     pc_FragColor.a = 1.0;
@@ -430,7 +362,7 @@ function init() {
     progress = {};
 
     scene_names.forEach((name, index) => {
-        promises.push(fetch(BASE+name+'/mlp.json').then(response => { return response.json(); }).then(network_weights => {
+        promises.push(fetch(BASE+name+'/clusters.txt').then(response => { return response.text(); }).then(Clusters => {
 
             console.log("[INFO] loading:", name);
             
@@ -444,17 +376,13 @@ function init() {
                     console.log('[INFO] loaded diffuse tex:', name, cas);
                     updateProgressBar(name, cas * 3 + 1);
                 });
-                let tex1 = new THREE.TextureLoader().load(BASE+name+'/feat1_'+cas.toString()+'.png', object => {
-                    console.log('[INFO] loaded specular tex:', name, cas);
-                    updateProgressBar(name, cas * 3 + 2);
-                });
                 
-                let tex2 = new THREE.TextureLoader().load(BASE+name+'/octahedron_maps.png', object => {
+                let tex1 = new THREE.TextureLoader().load(BASE+name+'/octahedron_maps.png', object => {
                     console.log('[INFO] loaded octahedral tex:', name, cas);
                     updateProgressBar(name, cas * 3 + 2);
                 });
                 
-                let tex3 = new THREE.TextureLoader().load(BASE+name+'/labels_map.png', object => {
+                let tex2 = new THREE.TextureLoader().load(BASE+name+'/labels_map.png', object => {
                     console.log('[INFO] loaded label tex:', name, cas);
                     updateProgressBar(name, cas * 3 + 2);
                 });
@@ -465,11 +393,7 @@ function init() {
                 tex1.minFilter = THREE.NearestFilter;
                 tex2.magFilter = THREE.NearestFilter;
                 tex2.minFilter = THREE.NearestFilter;
-                tex3.magFilter = THREE.NearestFilter;
-                tex3.minFilter = THREE.NearestFilter;
-
-                var Clusters = 16
-
+                
                 let newmat = new THREE.RawShaderMaterial({
                     side: THREE.DoubleSide,
                     vertexShader: RenderVertShader,
@@ -477,11 +401,10 @@ function init() {
                     uniforms: {
                         mode: { value: configs[name].renderMode },
                         tDiffuse: { value: tex0 },
-                        tSpecular: { value: tex1 },
-                        tOctahedronAtlas: { value: tex2 },
-                        tLabelMap: { value: tex3 },
+                        tOctahedronAtlas: { value: tex1 },
+                        tLabelMap: { value: tex2 },
                         clusters: { value: Clusters },
-                        clusters_sqrt: { value: Math.sqrt(Clusters) },
+                        clusters_sqrt: { value: Math.ceil(Math.sqrt(Clusters)) },
                     },
                     glslVersion: THREE.GLSL3
                 });
