@@ -1,7 +1,7 @@
 # Clustering addition to nerf2mesh
 
-This repository contains an implementation of this paper: [link soon]().
-The folder `paper_data` contains the data used to generate the results in this paper, as well as the results itself, based on the lego dataset from the nerf_synthetic source further down in this readme.
+This repository contains an implementation of [this paper](http://resolver.tudelft.nl/uuid:1d91b663-e35f-4bd5-a063-5c575ed9b14a).
+The branch [paper_data](https://github.com/jurrejelle/nerf2mesh/tree/paper-data) contains the data used to generate the results in this paper, as well as the results itself, based on the lego dataset from the nerf_synthetic source further down in this readme.
 
 # Install
 
@@ -36,7 +36,8 @@ python precompute.py --workspace paper_data/ --clusters 64 --mapping_resolution 
 To render full diffuse + specular clustered, you'll need to host this folder (e.g., by vscode live server), and open renderer_packed.html for further instructions.  
 These instructons are similar to running the original renderer, but renderer.html requires a mesh of stage 1, and renderer_packed.html requires a mesh that has been pre-computed.  
 
-
+### Unity shader
+A unity shader can be found as the file renderer_packed.shader
 
 
 
