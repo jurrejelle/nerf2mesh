@@ -152,11 +152,7 @@ void main() {
     } else {
         vec4 specular = texture( tSpecular, vUv );
         if (mode == 2) { // specular
-            
-            // print(evaluateNetwork(np.asarray([0.5,0.5,0.5], dtype=np.float64), norm(np.asarray([1,1,1])), weightsZero=weightsZero, weightsOne=weightsOne) * 255)
-            // #vec4 testvec = vec4(0.0, 0.8, 0.2, 0.0);
             pc_FragColor.rgb = evaluateNetwork(specular, normalize(rayDirection));
-            // pc_FragColor.rgb = normalize(rayDirection) * 0.5 + 0.5;
         } else { // full
             vec4 diffuse = texture( tDiffuse, vUv );
             pc_FragColor.rgb = clamp(diffuse.rgb + evaluateNetwork(specular, normalize(rayDirection)), 0.0f, 1.0f);
